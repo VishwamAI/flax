@@ -1182,90 +1182,89 @@ class Module(ModuleBase):
     return cls
 
   def _call_wrapped_method(self, fun, args, kwargs):
-    """Calls a wrapped method.
+      """Calls a wrapped method.
 
-    This function is responsible for setting up the thread local state
-    correctly before calling the method and cleaning up afterwards.
-    This includes storing intermediates, setup of the compact scope,
-    and making sure setup is called before any other method.
+      This function is responsible for setting up the thread local state
+      correctly before calling the method and cleaning up afterwards.
+      This includes storing intermediates, setup of the compact scope,
+      and making sure setup is called before any other method.
 
-    Args:
-      fun: The wrapped method.
-      args: Named arguments passed to ``fun``.
-      kwargs: Keyword arguments passed to ``fun``.
+      Args:
+        fun: The wrapped method.
+        args: Named arguments passed to ``fun``.
+        kwargs: Keyword arguments passed to ``fun``.
 
-    Returns:
-      The results of calling ``fun``.
-    """
-    is_compact_method = hasattr(fun, 'compact')
-    fun_name = _get_fn_name(fun)
-    is_setup_method = fun_name == 'setup'
-    add_call_info = not is_setup_method and len(_context.call_info_stack) > 0
-    # We lazily call setup() only when needed.
-    if is_setup_method:
-      if self.scope is None:
-        raise errors.CallSetupUnboundModuleError()
-      is_recurrent = self._state.in_setup
-      self._state.in_setup = True
-    else:
-      self._try_setup()
-
-    if is_compact_method:
-      if self.scope is None:
-        raise errors.CallCompactUnboundModuleError()
-      is_recurrent = self._state.in_compact_method
-      self._state.in_compact_method = True
-    _context.module_stack.append(self)
-    try:
-      # get call info
-      if add_call_info:
-        assert self.scope is not None
-        call_index = _context.call_info_stack[-1].get_call_index()
-
-      if _global_interceptor_stack:
-        run_fun = functools.partial(run_interceptors, fun)
+      Returns:
+        The results of calling ``fun``.
+      """
+      is_compact_method = hasattr(fun, 'compact')
+      fun_name = _get_fn_name(fun)
+      is_setup_method = fun_name == 'setup'
+      add_call_info = not is_setup_method and len(_context.call_info_stack) > 0
+      # We lazily call setup() only when needed.
+      if is_setup_method:
+          if self.scope is None:
+              raise errors.CallSetupUnboundModuleError()
+          is_recurrent = self._state.in_setup
+          self._state.in_setup = True
       else:
-        run_fun = fun
+          self._try_setup()
 
-      # call method
-      if _use_named_call:
-        with jax.named_scope(_derive_profiling_name(self, fun)):
-          y = run_fun(self, *args, **kwargs)
-      else:
-        y = run_fun(self, *args, **kwargs)
-
-      if _context.capture_stack:
-        filter_fn = _context.capture_stack[-1]
-        if filter_fn and filter_fn(self, fun_name):
-          self.sow('intermediates', fun_name, y)
-      if add_call_info:
-        _args, _kwargs, _y = flax.linen.summary._represent_tree(
-          (args, kwargs, y)
-        )
-        _context.call_info_stack[-1].calls.append(
-          _CallInfo(
-            call_index,
-            self.path,
-            self.clone(),
-            self.scope.rngs,
-            self.scope.mutable,
-            fun.__name__,
-            _args,
-            _kwargs,
-            _y,
-          )
-        )
-      return y
-    finally:
-      _context.module_stack.pop()
       if is_compact_method:
-        object.__setattr__(self, 'scope', self.scope.rewound())
-      # setup or compact calls can be recurrent for example due to super calls
-      # resetting the state would cause is compact/setup method
-      # to be set to False prematurely.
-      if (is_compact_method or is_setup_method) and not is_recurrent:
-        self._state.reset()
+          if self.scope is None:
+              raise errors.CallCompactUnboundModuleError()
+          is_recurrent = self._state.in_compact_method
+          self._state.in_compact_method = True
+      _context.module_stack.append(self)
+      try:
+          # get call info
+          if add_call_info:
+              assert self.scope is not None
+              call_index = _context.call_info_stack[-1].get_call_index()
 
+          if _global_interceptor_stack:
+              run_fun = functools.partial(run_interceptors, fun)
+          else:
+              run_fun = fun
+
+          # call method
+          if _use_named_call:
+              with jax.named_scope(_derive_profiling_name(self, fun)):
+                  y = run_fun(self, *args, **kwargs)
+          else:
+              y = run_fun(self, *args, **kwargs)
+
+          if _context.capture_stack:
+              filter_fn = _context.capture_stack[-1]
+              if filter_fn and filter_fn(self, fun_name):
+                  self.sow('intermediates', fun_name, y)
+          if add_call_info:
+              _args, _kwargs, _y = flax.linen.summary._represent_tree(
+                  (args, kwargs, y)
+              )
+              _context.call_info_stack[-1].calls.append(
+                  _CallInfo(
+                      call_index,
+                      self.path,
+                      self.clone(),
+                      self.scope.rngs,
+                      self.scope.mutable,
+                      fun.__name__,
+                      _args,
+                      _kwargs,
+                      _y,
+                  )
+              )
+          return y
+      finally:
+          _context.module_stack.pop()
+          if is_compact_method:
+              object.__setattr__(self, 'scope', self.scope.rewound())
+          # setup or compact calls can be recurrent for example due to super calls
+          # resetting the state would cause is compact/setup method
+          # to be set to False prematurely.
+          if (is_compact_method or is_setup_method) and not is_recurrent:
+              self._state.reset()
   def __setattr__(self, name: str, val: Any):
     """Sets an attribute on this Module.
 
